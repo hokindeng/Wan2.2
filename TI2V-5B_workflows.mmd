@@ -7,56 +7,56 @@
 %% SOFTWARE WORKFLOW (Flow)
 %% =========================
 flowchart TD
-    CLI[User CLI\npython generate.py --task ti2v-5B ...] --> ParseArgs[Parse args in generate.py]
-    ParseArgs -->|task=ti2v-5B| CreatePipeline[Create WanTI2V(config, ckpt, device, ...)]
+    CLI["User CLI<br/>python generate.py --task ti2v-5B"] --> ParseArgs["Parse args in generate.py"]
+    ParseArgs -->|task=ti2v-5B| CreatePipeline["Create WanTI2V<br/>config, ckpt, device"]
 
     subgraph Init[Pipeline Initialization]
-        CreatePipeline --> LoadT5[Load T5 encoder\n(checkpoint+tokenizer)]
-        CreatePipeline --> LoadVAE[Load Wan2_2_VAE\n(ckpt) -> device]
-        CreatePipeline --> LoadDiT[Load WanModel.from_pretrained\n(5B dense DiT)]
-        LoadDiT --> ConfModel[Configure model:\n- eval(), no grad\n- optional: sequence parallel\n- optional: FSDP (DiT)\n- optional: convert dtype (bf16)\n- move to device if needed]
+        CreatePipeline --> LoadT5["Load T5 encoder<br/>checkpoint+tokenizer"]
+        CreatePipeline --> LoadVAE["Load Wan2_2_VAE<br/>ckpt to device"]
+        CreatePipeline --> LoadDiT["Load WanModel.from_pretrained<br/>5B dense DiT"]
+        LoadDiT --> ConfModel["Configure model:<br/>eval no grad<br/>optional: sequence parallel<br/>optional: FSDP DiT<br/>optional: convert dtype bf16<br/>move to device if needed"]
     end
 
     ParseArgs --> Branch{Image provided?}
-    Branch -->|Yes| I2VPath[Call WanTI2V.generate(..., img=Image)]
-    Branch -->|No|  T2VPath[Call WanTI2V.generate(..., img=None)]
+    Branch -->|Yes| I2VPath["Call WanTI2V.generate<br/>with img=Image"]
+    Branch -->|No|  T2VPath["Call WanTI2V.generate<br/>with img=None"]
 
-    I2VPath --> PreI2V[Preprocess image:\nresize->center-crop->normalize\nto tensor (B,C,T,H,W)]
-    T2VPath --> PreT2V[Compute target latent shape from\nsize, frame_num, vae_stride, patch_size]
+    I2VPath --> PreI2V["Preprocess image:<br/>resize center-crop normalize<br/>to tensor B,C,T,H,W"]
+    T2VPath --> PreT2V["Compute target latent shape from<br/>size, frame_num, vae_stride, patch_size"]
 
-    PreI2V --> EncodeImg[vae.encode -> latent z]
-    PreT2V --> InitNoise[Init random noise latent(s)]
+    PreI2V --> EncodeImg["vae.encode to latent z"]
+    PreT2V --> InitNoise["Init random noise latents"]
 
     subgraph TextEnc[Text Encoding]
-        LoadT5 -->|move to device if needed| T5Run[Encode prompt and neg-prompt\n-> context, context_null]
-        T5Run -->|offload T5 back to CPU if enabled| T5Offload[T5 offload (optional)]
+        LoadT5 -->|move to device if needed| T5Run["Encode prompt and neg-prompt<br/>to context, context_null"]
+        T5Run -->|offload T5 back to CPU if enabled| T5Offload["T5 offload optional"]
     end
 
     subgraph Sampling[Sampling Setup]
-        PreI2V --> SeqLen[Compute seq_len for patches / SP]
+        PreI2V --> SeqLen["Compute seq_len for patches SP"]
         PreT2V --> SeqLen
-        SeqLen --> Sched[Create Scheduler:\nUniPC or DPM++\nset timesteps / sigmas]
+        SeqLen --> Sched["Create Scheduler:<br/>UniPC or DPM++<br/>set timesteps sigmas"]
     end
 
     subgraph Loop[Iterative Denoising Loop]
-        Sched --> ForEachT[for t in timesteps]
-        ForEachT --> BuildTS[Build timestep tensor\n(mask-based tiling across grid)]
-        BuildTS --> ForwardCond[DiT forward (cond):\nmodel(latent, t, context, seq_len)]
-        ForwardCond --> ForwardUncond[DiT forward (uncond):\nmodel(latent, t, context_null, seq_len)]
-        ForwardUncond --> CFG[Classifier-Free Guidance:\nnoise = uncond + gs*(cond-uncond)]
-        CFG --> StepUpdate[scheduler.step(noise, t, latent)\n-> new latent]
-        StepUpdate -->|I2V only| BlendMask[Blend with image-conditioned regions:\nlatent = (1-mask)*z + mask*latent]
+        Sched --> ForEachT["for t in timesteps"]
+        ForEachT --> BuildTS["Build timestep tensor<br/>mask-based tiling across grid"]
+        BuildTS --> ForwardCond["DiT forward cond:<br/>model latent, t, context, seq_len"]
+        ForwardCond --> ForwardUncond["DiT forward uncond:<br/>model latent, t, context_null, seq_len"]
+        ForwardUncond --> CFG["Classifier-Free Guidance:<br/>noise = uncond + gs times cond-uncond"]
+        CFG --> StepUpdate["scheduler.step noise, t, latent<br/>to new latent"]
+        StepUpdate -->|I2V only| BlendMask["Blend with image-conditioned regions:<br/>latent = 1-mask times z + mask times latent"]
         BlendMask --> NextIter[Next timestep]
         StepUpdate --> NextIter
     end
 
-    NextIter --> DoneLoop[Loop complete]
-    DoneLoop --> Decode[vae.decode(latent(s)) -> video tensor]
-    Decode --> Save[Save MP4 with fps\n(save_video in utils)]
-    Save --> Output[Return / write final video]
+    NextIter --> DoneLoop["Loop complete"]
+    DoneLoop --> Decode["vae.decode latents to video tensor"]
+    Decode --> Save["Save MP4 with fps<br/>save_video in utils"]
+    Save --> Output["Return write final video"]
 
     %% Optional VRAM optimization
-    ConfModel -. optional .-> OffloadDiT[Move DiT CPU/GPU between steps]
+    ConfModel -. optional .-> OffloadDiT["Move DiT CPU GPU between steps"]
     OffloadDiT -. reduces VRAM .-> Loop
 
 
@@ -65,44 +65,44 @@ flowchart TD
 %% ============================
 flowchart LR
     subgraph Inputs[Inputs]
-        P[Text prompt]:::i -->|tokenize| T5[T5-XXL Encoder]:::op
-        N[Negative prompt]:::i -->|tokenize| T5
-        IMG[Optional reference image]:::i
-        H[Size (W,H), frame_num, steps, guide_scale, seed]:::i
+        P["Text prompt"]:::i -->|tokenize| T5["T5-XXL Encoder"]:::op
+        N["Negative prompt"]:::i -->|tokenize| T5
+        IMG["Optional reference image"]:::i
+        H["Size W,H, frame_num, steps, guide_scale, seed"]:::i
     end
 
-    T5 --> C[context embeddings]:::d
-    T5 --> Cn[negative context]:::d
+    T5 --> C["context embeddings"]:::d
+    T5 --> Cn["negative context"]:::d
 
     subgraph Latents[Latent Preparation]
         direction TB
-        IMG --> PreI[Resize->CenterCrop->Normalize]:::op
-        PreI --> Zenc[Encode via Wan2_2_VAE]:::op --> Z[z (latent video grid)]:::d
-        H --> Shape[Compute latent target shape:\nF, H', W' from vae_stride & patch_size]:::op
-        Shape --> Noise[Init Gaussian noise in latent space]:::d
-        Z --> MaskBuild[Build spatial-temporal masks]:::op
-        Noise --> L0[Initial latent]:::d
+        IMG --> PreI["Resize CenterCrop Normalize"]:::op
+        PreI --> Zenc["Encode via Wan2_2_VAE"]:::op --> Z["z latent video grid"]:::d
+        H --> Shape["Compute latent target shape:<br/>F, H', W' from vae_stride & patch_size"]:::op
+        Shape --> Noise["Init Gaussian noise in latent space"]:::d
+        Z --> MaskBuild["Build spatial-temporal masks"]:::op
+        Noise --> L0["Initial latent"]:::d
         Z -. if IMG absent, skip .-> MaskBuild
     end
 
     subgraph SchedSP[Scheduling & Parallel]
         direction TB
-        H --> Sched2[Init Flow Scheduler:\nUniPC or DPM++]:::op
-        Sched2 --> TS[timesteps / sigmas]:::d
-        H --> SP[Optional: Sequence Parallel (Ulysses)]:::op
-        H --> FSDP[Optional: FSDP sharding (DiT)]:::op
+        H --> Sched2["Init Flow Scheduler:<br/>UniPC or DPM++"]:::op
+        Sched2 --> TS["timesteps sigmas"]:::d
+        H --> SP["Optional: Sequence Parallel Ulysses"]:::op
+        H --> FSDP["Optional: FSDP sharding DiT"]:::op
     end
 
     subgraph Iterate[Iterative Denoising]
         direction TB
-        TS --> Tstep[For t in timesteps]:::ctl
-        Tstep --> Tgrid[Tile timestep across grid\n(mask-aware)]:::op
-        L0 --> Cond[DiT forward (cond): f(L, t, C)]:::op
-        L0 --> Uncond[DiT forward (uncond): f(L, t, Cn)]:::op
-        Cond --> CFG2[Classifier-Free Guidance:\nε = ε_u + s*(ε_c - ε_u)]:::op
+        TS --> Tstep["For t in timesteps"]:::ctl
+        Tstep --> Tgrid["Tile timestep across grid<br/>mask-aware"]:::op
+        L0 --> Cond["DiT forward cond: f L, t, C"]:::op
+        L0 --> Uncond["DiT forward uncond: f L, t, Cn"]:::op
+        Cond --> CFG2["Classifier-Free Guidance:<br/>ε = ε_u + s times ε_c - ε_u"]:::op
         Uncond --> CFG2
-        CFG2 --> Update[scheduler.step(ε, t, L)]:::op --> L1[Updated latent]:::d
-        Z -->|I2V only| Blend[(1-mask)*Z + mask*L1]:::op --> L1b[Blended latent]:::d
+        CFG2 --> Update["scheduler.step ε, t, L"]:::op --> L1["Updated latent"]:::d
+        Z -->|I2V only| Blend["1-mask times Z + mask times L1"]:::op --> L1b["Blended latent"]:::d
         L1 --> Next
         L1b --> Next
         Next -->|replace L| L0
@@ -110,8 +110,8 @@ flowchart LR
 
     subgraph DecodeOut[Decode & Output]
         direction TB
-        L0 --> Dec[Decode via Wan2_2_VAE]:::op --> Vid[Video frames tensor]:::d
-        Vid --> MP4[Write video (fps)]:::op --> OUT[Final MP4]
+        L0 --> Dec["Decode via Wan2_2_VAE"]:::op --> Vid["Video frames tensor"]:::d
+        Vid --> MP4["Write video fps"]:::op --> OUT["Final MP4"]
     end
 
     classDef i fill:#eef,stroke:#77a,color:#000;
