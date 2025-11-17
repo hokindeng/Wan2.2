@@ -1,44 +1,117 @@
-graph TD
-    Start["User runs: python generate.py --task ti2v-5B"] --> Parse["Parse arguments"]
-    Parse --> CreatePipe["Create WanTI2V pipeline"]
+graph TB
+    Start["CLI Entry: python generate.py --task ti2v-5B"] --> ParseArgs["parse_args()<br/>ArgumentParser"]
+    ParseArgs --> ValidateArgs["_validate_args(args)<br/>Check task, size, frame_num"]
+    ValidateArgs --> LoadConfig["cfg = WAN_CONFIGS['ti2v-5B']<br/>Load wan_ti2v_5B.py config"]
     
-    CreatePipe --> LoadT5["Load T5 encoder"]
-    CreatePipe --> LoadVAE["Load Wan2.2 VAE"]
-    CreatePipe --> LoadDiT["Load 5B DiT model"]
+    LoadConfig --> InitPipeline["WanTI2V.__init__()"]
     
-    LoadDiT --> ConfigModel["Configure model:<br/>eval mode, dtype bf16"]
+    subgraph InitPipeline ["Pipeline Initialization (wan/textimage2video.py)"]
+        InitStart["Constructor Entry"] --> SetDevice["Set device: cuda:{device_id}"]
+        SetDevice --> InitT5["T5EncoderModel<br/>- Load umt5-xxl encoder<br/>- text_len=512, dtype=bf16<br/>- Optional: t5_fsdp sharding"]
+        InitT5 --> InitVAE["Wan2_2_VAE<br/>- Load VAE checkpoint<br/>- z_dim=48, stride=(4,16,16)<br/>- Encoder/Decoder 3D Conv"]
+        InitVAE --> InitDiT["WanModel.from_pretrained()<br/>- Load DiT checkpoint<br/>- model_type='ti2v'<br/>- 5B params: 30 layers, 3072 dim"]
+        InitDiT --> ConfigDiT["_configure_model()<br/>- .eval().requires_grad_(False)<br/>- Optional: FSDP/Ulysses SP<br/>- dtype conversion<br/>- Device placement"]
+    end
     
-    Parse --> CheckImage{"Image<br/>provided?"}
-    CheckImage -->|Yes| I2VFlow["I2V mode"]
-    CheckImage -->|No| T2VFlow["T2V mode"]
+    InitPipeline --> CheckImageArg{"img parameter<br/>provided?"}
     
-    I2VFlow --> PrepImage["Preprocess image:<br/>resize, crop, normalize"]
-    T2VFlow --> CalcShape["Calculate latent shape"]
+    CheckImageArg -->|"img=None"| T2VPath["Call self.t2v()"]
+    CheckImageArg -->|"img=PIL.Image"| I2VPath["Call self.i2v()"]
     
-    PrepImage --> EncodeImage["VAE encode image"]
-    CalcShape --> InitNoise["Initialize random noise"]
+    subgraph I2VPath ["Image-to-Video Path (wan/textimage2video.py:413-619)"]
+        I2VStart["i2v() method entry"] --> ImgPreprocess["Image Preprocessing<br/>1. best_output_size(max_area)<br/>2. img.resize(LANCZOS)<br/>3. Center crop<br/>4. TF.to_tensor().sub(0.5).div(0.5)"]
+        ImgPreprocess --> CalcSeqLen["Calculate seq_len<br/>= ceil((F-1)/stride[0]+1 * H/stride[1] * W/stride[2]<br/>÷ patch_size[1:3]) * sp_size"]
+        CalcSeqLen --> InitRandom["Random Seed Setup<br/>seed_g = torch.Generator()<br/>seed_g.manual_seed(seed)"]
+        InitRandom --> InitNoise["Initialize Noise Tensor<br/>shape=(z_dim, (F-1)//4+1, H//16, W//16)<br/>dtype=float32"]
+        
+        InitNoise --> EncodeText["Text Encoding"]
+        subgraph EncodeText ["T5 Text Encoding"]
+            T5Forward["self.text_encoder([prompt])<br/>→ context [seq_len=512, dim=4096]"]
+            T5NegForward["self.text_encoder([n_prompt])<br/>→ context_null"]
+            T5Offload["Optional: text_encoder.cpu()"]
+        end
+        
+        EncodeText --> EncodeImg["VAE Encode Image<br/>z = self.vae.encode([img])<br/>Latent shape: [48, 1, H//16, W//16]"]
+        
+        EncodeImg --> SetupScheduler["Setup Flow Scheduler"]
+        subgraph SetupScheduler ["Scheduler Configuration"]
+            SchedulerChoice{"sample_solver?"}
+            SchedulerChoice -->|"'unipc'"| UniPC["FlowUniPCMultistepScheduler<br/>- num_train_timesteps=1000<br/>- set_timesteps(steps, shift)"]
+            SchedulerChoice -->|"'dpm++'"| DPM["FlowDPMSolverMultistepScheduler<br/>- get_sampling_sigmas(steps, shift)<br/>- retrieve_timesteps()"]
+        end
+        
+        SetupScheduler --> InitMasks["Create Masks<br/>mask1, mask2 = masks_like([noise], zero=True)<br/>mask2: first frame zeros, rest ones"]
+        InitMasks --> BlendLatent["Blend Image Latent with Noise<br/>latent = (1-mask2[0])*z[0] + mask2[0]*noise<br/>First frame: image, Rest: noise"]
+        
+        BlendLatent --> PrepareArgs["Prepare Model Args<br/>arg_c = {context: [context[0]], seq_len}<br/>arg_null = {context: context_null, seq_len}"]
+        PrepareArgs --> LoadModel["Optional: self.model.to(device)<br/>torch.cuda.empty_cache()"]
+        
+        LoadModel --> DenoisingLoop["Denoising Loop<br/>for t in timesteps:"]
+        
+        subgraph DenoisingLoop ["Iterative Denoising (40-50 steps)"]
+            PrepInput["latent_model_input = [latent]<br/>timestep = torch.stack([t])"]
+            PrepInput --> MaskTimestep["Apply Mask to Timestep<br/>temp_ts = (mask2*timestep).flatten()<br/>Spatially-varying timesteps"]
+            
+            MaskTimestep --> ForwardCond["DiT Forward: Conditional<br/>noise_pred_cond = self.model(<br/>  latent_model_input,<br/>  t=timestep,<br/>  **arg_c)[0]"]
+            ForwardCond --> OptOffload1["Optional: torch.cuda.empty_cache()"]
+            
+            OptOffload1 --> ForwardUncond["DiT Forward: Unconditional<br/>noise_pred_uncond = self.model(<br/>  latent_model_input,<br/>  t=timestep,<br/>  **arg_null)[0]"]
+            ForwardUncond --> OptOffload2["Optional: torch.cuda.empty_cache()"]
+            
+            OptOffload2 --> CFG["Classifier-Free Guidance<br/>noise_pred = noise_pred_uncond<br/>  + guide_scale*(noise_pred_cond - noise_pred_uncond)"]
+            CFG --> SchedulerStep["Scheduler Step<br/>temp_x0 = sample_scheduler.step(<br/>  noise_pred, t, latent, generator=seed_g)[0]"]
+            
+            SchedulerStep --> ReapplyMask["Re-blend with Image Latent<br/>latent = (1-mask2[0])*z[0] + mask2[0]*temp_x0<br/>Preserve first frame conditioning"]
+            ReapplyMask --> LoopCheck{"More timesteps?"}
+            LoopCheck -->|Yes| PrepInput
+        end
+        
+        DenoisingLoop --> UnloadModel["Optional: self.model.cpu()<br/>torch.cuda.synchronize()"]
+        UnloadModel --> VAEDecode["VAE Decode<br/>videos = self.vae.decode([latent])<br/>Output: [3, F, H, W] ∈ [-1, 1]"]
+        VAEDecode --> Cleanup["Cleanup<br/>del noise, latent, scheduler<br/>gc.collect(), dist.barrier()"]
+    end
     
-    EncodeImage --> TextEncode["Encode text prompt<br/>with T5"]
-    InitNoise --> TextEncode
+    subgraph T2VPath ["Text-to-Video Path (wan/textimage2video.py:239-411)"]
+        T2VStart["t2v() method entry"] --> CalcShape["Calculate target_shape<br/>=(z_dim, (F-1)//4+1, H//16, W//16)"]
+        CalcShape --> T2VSeqLen["Calculate seq_len<br/>Spatial patches * temporal patches"]
+        T2VSeqLen --> T2VRandom["seed_g = torch.Generator().manual_seed(seed)"]
+        T2VRandom --> T2VText["T5 Text Encoding<br/>context, context_null"]
+        T2VText --> T2VNoise["noise = [torch.randn(target_shape)]<br/>Pure random noise initialization"]
+        T2VNoise --> T2VScheduler["Setup Scheduler (UniPC/DPM++)"]
+        T2VScheduler --> T2VMasks["mask1, mask2 = masks_like(noise, zero=False)<br/>All ones for T2V"]
+        T2VMasks --> T2VArgs["arg_c = {context, seq_len}<br/>arg_null = {context_null, seq_len}"]
+        T2VArgs --> T2VLoop["Denoising Loop<br/>Same CFG + Scheduler structure"]
+        T2VLoop --> T2VDecode["VAE Decode to Video"]
+    end
     
-    TextEncode --> SetupScheduler["Setup scheduler:<br/>UniPC or DPM++"]
-    
-    SetupScheduler --> DenoisingLoop["Denoising loop"]
-    
-    DenoisingLoop --> ForwardCond["Forward pass: conditional"]
-    ForwardCond --> ForwardUncond["Forward pass: unconditional"]
-    ForwardUncond --> CFG["Apply classifier-free guidance"]
-    CFG --> SchedulerStep["Scheduler step"]
-    SchedulerStep --> CheckDone{"More<br/>steps?"}
-    CheckDone -->|Yes| DenoisingLoop
-    CheckDone -->|No| DecodeVAE["VAE decode to video"]
-    
-    DecodeVAE --> SaveVideo["Save as MP4"]
+    I2VPath --> SaveVideo["Save Video<br/>save_videos_grid(video, save_file)<br/>MP4 format, fps=24"]
+    T2VPath --> SaveVideo
     SaveVideo --> End["Done"]
-
-    style Start fill:#e1f5ff
+    
+    subgraph DiTArchitecture ["DiT Model Forward (wan/modules/model.py:410-485)"]
+        DiTEntry["forward(x, t, context, seq_len)"] --> PatchEmbed["Patch Embedding<br/>Conv3d: (C_in,F,H,W) → (dim,F',H',W')<br/>patch_size=(1,2,2)"]
+        PatchEmbed --> Flatten["Flatten & Pad<br/>→ [B, seq_len, dim]"]
+        Flatten --> TimeEmbed["Time Embedding<br/>sinusoidal_embedding_1d(t)<br/>→ MLP → [B, seq_len, 6*dim]"]
+        TimeEmbed --> TextEmbed["Text Projection<br/>Linear(text_dim=4096 → dim=3072)"]
+        TextEmbed --> TransformerBlocks["30x WanAttentionBlock<br/>- RoPE positional encoding<br/>- Self-Attention (QK-norm)<br/>- Cross-Attention to text<br/>- FFN with modulation"]
+        TransformerBlocks --> OutputHead["Output Head<br/>LayerNorm + Linear(dim → out_dim=48)<br/>Unpatchify"]
+    end
+    
+    subgraph VAEArchitecture ["VAE Architecture (wan/modules/vae2_2.py)"]
+        VAEEnc["Encoder: Encoder3d<br/>- 4 stages with stride=(4,16,16)<br/>- ResBlocks + CausalConv3d<br/>- Output: 48 channels"]
+        VAEDec["Decoder: Decoder3d<br/>- Reverse process<br/>- Temporal upsampling<br/>- Output: RGB video"]
+        VAEScale["Normalization<br/>- mean/std per channel<br/>- Scale during encode/decode"]
+    end
+    
+    style Start fill:#e3f2fd
     style End fill:#c8e6c9
-    style CheckImage fill:#fff9c4
-    style CheckDone fill:#fff9c4
+    style CheckImageArg fill:#fff9c4
+    style LoopCheck fill:#fff9c4
+    style InitPipeline fill:#f3e5f5
+    style I2VPath fill:#e8f5e9
+    style T2VPath fill:#fce4ec
     style DenoisingLoop fill:#ffe0b2
-    style DecodeVAE fill:#f8bbd0
+    style DiTArchitecture fill:#e1f5fe
+    style VAEArchitecture fill:#f1f8e9
+    style SetupScheduler fill:#fce4ec
+    style EncodeText fill:#e0f2f1
