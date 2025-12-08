@@ -1,0 +1,165 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1a1a2e', 'primaryTextColor': '#ffffff', 'primaryBorderColor': '#7b2cbf', 'lineColor': '#9d4edd', 'secondaryColor': '#240046', 'tertiaryColor': '#3c096c'}}}%%
+
+graph TB
+    subgraph ROOT["📁 Project Root"]
+        GENERATE["<b>generate.py</b><br/>━━━━━━━━━━━━<br/>Main entry point<br/>CLI argument parsing<br/>Task routing"]
+    end
+
+    subgraph WAN["📦 wan/ Package"]
+        INIT["<b>__init__.py</b><br/>━━━━━━━━━━━━<br/>Exports:<br/>• WanT2V<br/>• WanI2V<br/>• WanTI2V<br/>• WanS2V<br/>• WanAnimate"]
+    end
+
+    subgraph PIPELINES["🎬 Pipeline Modules"]
+        T2V["<b>text2video.py</b><br/>━━━━━━━━━━━━<br/>class WanT2V<br/>• __init__()<br/>• _configure_model()<br/>• _prepare_model_for_timestep()<br/>• generate()"]
+        
+        I2V["<b>image2video.py</b><br/>━━━━━━━━━━━━<br/>class WanI2V<br/>• Image preprocessing<br/>• Mask generation<br/>• First-frame conditioning"]
+        
+        TI2V["<b>textimage2video.py</b><br/>━━━━━━━━━━━━<br/>class WanTI2V<br/>• 5B model (no MoE)<br/>• Text+Image fusion"]
+        
+        S2V["<b>speech2video.py</b><br/>━━━━━━━━━━━━<br/>class WanS2V<br/>• Audio encoding<br/>• Multi-clip generation<br/>• TTS integration"]
+        
+        ANIMATE["<b>animate.py</b><br/>━━━━━━━━━━━━<br/>class WanAnimate<br/>• Pose preprocessing<br/>• Motion transfer<br/>• Face encoding"]
+    end
+
+    subgraph CONFIGS["⚙️ wan/configs/"]
+        CFG_INIT["<b>__init__.py</b><br/>━━━━━━━━━━━━<br/>WAN_CONFIGS dict<br/>SIZE_CONFIGS<br/>SUPPORTED_SIZES"]
+        
+        CFG_SHARED["<b>shared_config.py</b><br/>━━━━━━━━━━━━<br/>wan_shared_cfg<br/>• t5_model<br/>• param_dtype<br/>• sample_fps"]
+        
+        CFG_T2V["<b>wan_t2v_A14B.py</b>"]
+        CFG_I2V["<b>wan_i2v_A14B.py</b>"]
+        CFG_TI2V["<b>wan_ti2v_5B.py</b>"]
+        CFG_S2V["<b>wan_s2v_14B.py</b>"]
+        CFG_ANIM["<b>wan_animate_14B.py</b>"]
+    end
+
+    subgraph MODULES["🧠 wan/modules/"]
+        MOD_INIT["<b>__init__.py</b>"]
+        
+        MODEL["<b>model.py</b><br/>━━━━━━━━━━━━<br/>class WanModel(ModelMixin, ConfigMixin)<br/>• sinusoidal_embedding_1d()<br/>• rope_params(), rope_apply()<br/>• WanRMSNorm, WanLayerNorm<br/>• WanSelfAttention<br/>• WanCrossAttention<br/>• WanAttentionBlock<br/>• Head<br/>• forward(), unpatchify()"]
+        
+        ATTENTION["<b>attention.py</b><br/>━━━━━━━━━━━━<br/>flash_attention()<br/>• PyTorch SDPA<br/>• Flash Attention 2"]
+        
+        T5["<b>t5.py</b><br/>━━━━━━━━━━━━<br/>class T5EncoderModel<br/>• T5Encoder<br/>• T5Attention<br/>• T5FeedForward<br/>• T5RelativeEmbedding"]
+        
+        VAE21["<b>vae2_1.py</b><br/>━━━━━━━━━━━━<br/>class Wan2_1_VAE<br/>• CausalConv3d<br/>• Encoder3d<br/>• Decoder3d<br/>• ResidualBlock<br/>• AttentionBlock"]
+        
+        VAE22["<b>vae2_2.py</b><br/>━━━━━━━━━━━━<br/>class Wan2_2_VAE<br/>• 4×16×16 compression<br/>• For TI2V-5B"]
+        
+        TOKENIZERS["<b>tokenizers.py</b><br/>━━━━━━━━━━━━<br/>HuggingfaceTokenizer"]
+    end
+
+    subgraph S2V_MODULES["🎤 wan/modules/s2v/"]
+        S2V_INIT["<b>__init__.py</b>"]
+        AUDIO_ENC["<b>audio_encoder.py</b><br/>━━━━━━━━━━━━<br/>AudioEncoder<br/>• wav2vec2 features<br/>• Frame alignment"]
+        MODEL_S2V["<b>model_s2v.py</b><br/>━━━━━━━━━━━━<br/>WanModel_S2V<br/>• Audio conditioning<br/>• Motion latents"]
+        MOTIONER["<b>motioner.py</b>"]
+        AUDIO_UTILS["<b>audio_utils.py</b>"]
+    end
+
+    subgraph ANIMATE_MODULES["🕺 wan/modules/animate/"]
+        ANIM_INIT["<b>__init__.py</b>"]
+        MODEL_ANIM["<b>model_animate.py</b>"]
+        MOTION_ENC["<b>motion_encoder.py</b>"]
+        FACE_BLOCKS["<b>face_blocks.py</b>"]
+        CLIP_MOD["<b>clip.py</b>"]
+        XLM["<b>xlm_roberta.py</b>"]
+        
+        subgraph PREPROCESS["preprocess/"]
+            POSE2D["<b>pose2d.py</b>"]
+            RETARGET["<b>retarget_pose.py</b>"]
+            SAM_UTILS["<b>sam_utils.py</b>"]
+            VIDEO_PRED["<b>video_predictor.py</b>"]
+        end
+    end
+
+    subgraph DISTRIBUTED["🌐 wan/distributed/"]
+        DIST_INIT["<b>__init__.py</b>"]
+        FSDP["<b>fsdp.py</b><br/>━━━━━━━━━━━━<br/>shard_model()<br/>free_model()<br/>• FSDP wrapping<br/>• Mixed precision"]
+        SEQ_PAR["<b>sequence_parallel.py</b><br/>━━━━━━━━━━━━<br/>sp_attn_forward()<br/>sp_dit_forward()<br/>• Head distribution"]
+        ULYSSES["<b>ulysses.py</b><br/>━━━━━━━━━━━━<br/>UlyssesAttention<br/>• AllGather Q<br/>• AllToAll KV"]
+        DIST_UTIL["<b>util.py</b><br/>━━━━━━━━━━━━<br/>init_distributed_group()<br/>get_world_size()"]
+    end
+
+    subgraph UTILS["🔧 wan/utils/"]
+        UTILS_INIT["<b>__init__.py</b>"]
+        FM_SOLVERS["<b>fm_solvers.py</b><br/>━━━━━━━━━━━━<br/>FlowDPMSolverMultistepScheduler<br/>get_sampling_sigmas()<br/>retrieve_timesteps()"]
+        FM_UNIPC["<b>fm_solvers_unipc.py</b><br/>━━━━━━━━━━━━<br/>FlowUniPCMultistepScheduler"]
+        PROMPT_EXT["<b>prompt_extend.py</b><br/>━━━━━━━━━━━━<br/>DashScopePromptExpander<br/>QwenPromptExpander"]
+        UTILS_FILE["<b>utils.py</b><br/>━━━━━━━━━━━━<br/>save_video()<br/>merge_video_audio()"]
+        SYS_PROMPT["<b>system_prompt.py</b>"]
+    end
+
+    %% Dependencies
+    GENERATE --> INIT
+    GENERATE --> CFG_INIT
+    GENERATE --> PROMPT_EXT
+    GENERATE --> UTILS_FILE
+    
+    INIT --> T2V
+    INIT --> I2V
+    INIT --> TI2V
+    INIT --> S2V
+    INIT --> ANIMATE
+    
+    T2V --> MODEL
+    T2V --> T5
+    T2V --> VAE21
+    T2V --> FSDP
+    T2V --> SEQ_PAR
+    T2V --> FM_UNIPC
+    T2V --> FM_SOLVERS
+    
+    I2V --> MODEL
+    I2V --> T5
+    I2V --> VAE21
+    
+    TI2V --> MODEL
+    TI2V --> VAE22
+    
+    S2V --> MODEL_S2V
+    S2V --> AUDIO_ENC
+    S2V --> T5
+    S2V --> VAE21
+    
+    ANIMATE --> MODEL_ANIM
+    ANIMATE --> MOTION_ENC
+    ANIMATE --> FACE_BLOCKS
+    
+    MODEL --> ATTENTION
+    MODEL_S2V --> MODEL
+    MODEL_ANIM --> MODEL
+    
+    T5 --> TOKENIZERS
+    
+    CFG_INIT --> CFG_SHARED
+    CFG_T2V --> CFG_SHARED
+    CFG_I2V --> CFG_SHARED
+    CFG_TI2V --> CFG_SHARED
+    CFG_S2V --> CFG_SHARED
+    CFG_ANIM --> CFG_SHARED
+    
+    SEQ_PAR --> ULYSSES
+    FSDP --> DIST_UTIL
+    SEQ_PAR --> DIST_UTIL
+
+    %% Styling
+    classDef root fill:#2d2d44,stroke:#9d4edd,stroke-width:3px,color:#fff
+    classDef package fill:#3c096c,stroke:#7b2cbf,stroke-width:2px,color:#fff
+    classDef pipeline fill:#240046,stroke:#c77dff,stroke-width:2px,color:#fff
+    classDef config fill:#5a189a,stroke:#e0aaff,stroke-width:1px,color:#fff
+    classDef module fill:#10002b,stroke:#9d4edd,stroke-width:2px,color:#fff
+    classDef dist fill:#1a472a,stroke:#4ade80,stroke-width:2px,color:#fff
+    classDef utils fill:#4a1942,stroke:#f472b6,stroke-width:2px,color:#fff
+    
+    class GENERATE root
+    class INIT package
+    class T2V,I2V,TI2V,S2V,ANIMATE pipeline
+    class CFG_INIT,CFG_SHARED,CFG_T2V,CFG_I2V,CFG_TI2V,CFG_S2V,CFG_ANIM config
+    class MODEL,ATTENTION,T5,VAE21,VAE22,TOKENIZERS,MOD_INIT module
+    class AUDIO_ENC,MODEL_S2V,MOTIONER,AUDIO_UTILS,S2V_INIT module
+    class MODEL_ANIM,MOTION_ENC,FACE_BLOCKS,CLIP_MOD,XLM,ANIM_INIT module
+    class POSE2D,RETARGET,SAM_UTILS,VIDEO_PRED module
+    class FSDP,SEQ_PAR,ULYSSES,DIST_UTIL,DIST_INIT dist
+    class FM_SOLVERS,FM_UNIPC,PROMPT_EXT,UTILS_FILE,SYS_PROMPT,UTILS_INIT utils
+

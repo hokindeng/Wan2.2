@@ -1,0 +1,207 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#1a1a2e', 'primaryTextColor': '#eaeaea', 'primaryBorderColor': '#4a4a6a', 'lineColor': '#00d4ff', 'secondaryColor': '#16213e', 'tertiaryColor': '#0f3460', 'background': '#0a0a14', 'mainBkg': '#1a1a2e', 'nodeBorder': '#00d4ff', 'clusterBkg': '#0f3460', 'clusterBorder': '#00d4ff', 'titleColor': '#00d4ff', 'edgeLabelBackground': '#1a1a2e'}}}%%
+
+flowchart TB
+    subgraph ENTRY["🚀 ENTRY POINT"]
+        direction LR
+        CLI["<b>generate.py</b><br/>Command Line Interface<br/>━━━━━━━━━━━━<br/>--task: t2v-A14B, i2v-A14B,<br/>ti2v-5B, s2v-14B, animate-14B<br/>--ckpt_dir, --prompt<br/>--size, --frame_num"]
+    end
+
+    subgraph CONFIG["⚙️ CONFIGURATION LAYER"]
+        direction TB
+        WAN_CONFIGS["<b>wan/configs/</b><br/>━━━━━━━━━━━━<br/>shared_config.py<br/>wan_t2v_A14B.py<br/>wan_i2v_A14B.py<br/>wan_ti2v_5B.py<br/>wan_s2v_14B.py<br/>wan_animate_14B.py"]
+        
+        subgraph PARAMS["Model Parameters"]
+            direction LR
+            P1["num_train_timesteps: 1000"]
+            P2["sample_fps: 16"]
+            P3["param_dtype: bfloat16"]
+            P4["text_len: 512"]
+        end
+    end
+
+    subgraph PIPELINES["🎬 VIDEO GENERATION PIPELINES"]
+        direction TB
+        
+        subgraph T2V["WanT2V - Text to Video"]
+            T2V_DESC["<b>wan/text2video.py</b><br/>━━━━━━━━━━━━<br/>• 27B params (2×14B experts)<br/>• MoE expert switching<br/>• Flow matching diffusion"]
+        end
+        
+        subgraph I2V["WanI2V - Image to Video"]
+            I2V_DESC["<b>wan/image2video.py</b><br/>━━━━━━━━━━━━<br/>• First frame conditioning<br/>• 27B params (2×14B experts)<br/>• VAE image encoding"]
+        end
+        
+        subgraph TI2V["WanTI2V - Text+Image to Video"]
+            TI2V_DESC["<b>wan/textimage2video.py</b><br/>━━━━━━━━━━━━<br/>• 5B model (no MoE)<br/>• Wan2.2 VAE (4×16×16)<br/>• Consumer GPU friendly"]
+        end
+        
+        subgraph S2V["WanS2V - Speech to Video"]
+            S2V_DESC["<b>wan/speech2video.py</b><br/>━━━━━━━━━━━━<br/>• Audio encoder (wav2vec2)<br/>• Lip sync generation<br/>• Multi-clip generation"]
+        end
+        
+        subgraph ANIM["WanAnimate - Character Animation"]
+            ANIM_DESC["<b>wan/animate.py</b><br/>━━━━━━━━━━━━<br/>• Pose/motion transfer<br/>• Face preservation<br/>• Character reenactment"]
+        end
+    end
+
+    subgraph CORE["🧠 CORE NEURAL NETWORK MODULES"]
+        direction TB
+        
+        subgraph ENCODERS["Input Encoders"]
+            direction LR
+            T5["<b>T5EncoderModel</b><br/><i>wan/modules/t5.py</i><br/>━━━━━━━━━━━━<br/>• UMT5-XXL (4096 dim)<br/>• 24 encoder layers<br/>• 64 attention heads<br/>• 256K vocab size<br/><br/>Input: Text prompt<br/>Output: [B, 512, 4096]"]
+            
+            VAE["<b>Wan2_1_VAE / Wan2_2_VAE</b><br/><i>wan/modules/vae2_1.py</i><br/>━━━━━━━━━━━━<br/>• 3D Causal Convolutions<br/>• Encoder3d + Decoder3d<br/>• z_dim: 16 channels<br/><br/>Compression:<br/>• 2.1: 4×8×8<br/>• 2.2: 4×16×16"]
+            
+            AUDIO["<b>AudioEncoder</b><br/><i>wan/modules/s2v/audio_encoder.py</i><br/>━━━━━━━━━━━━<br/>• wav2vec2-large-xlsr<br/>• Audio feature extraction<br/>• Per-frame embeddings"]
+        end
+        
+        subgraph DIT["DiT Transformer (WanModel)"]
+            direction TB
+            DIT_MAIN["<b>WanModel</b><br/><i>wan/modules/model.py</i><br/>━━━━━━━━━━━━━━━━━<br/>• Diffusion Transformer backbone<br/>• 32 WanAttentionBlock layers<br/>• dim: 2048, ffn_dim: 8192<br/>• 16 attention heads"]
+            
+            subgraph ATTN["Attention Blocks"]
+                direction LR
+                SELF["<b>WanSelfAttention</b><br/>• RoPE positional encoding<br/>• Flash Attention<br/>• QK normalization"]
+                CROSS["<b>WanCrossAttention</b><br/>• Text conditioning<br/>• Context injection"]
+                FFN["<b>FFN</b><br/>• GELU activation<br/>• 4× expansion"]
+            end
+            
+            subgraph COMPONENTS["Key Components"]
+                direction LR
+                PATCH["<b>PatchEmbedding</b><br/>Conv3d(16→2048)<br/>kernel: (1,2,2)"]
+                TIME["<b>TimeEmbedding</b><br/>Sinusoidal + MLP<br/>→ 6×dim modulation"]
+                HEAD["<b>Head</b><br/>Unpatchify<br/>→ [C, F, H, W]"]
+            end
+        end
+    end
+
+    subgraph MOE["🔄 MIXTURE OF EXPERTS (MoE)"]
+        direction TB
+        MOE_DESC["<b>Expert Switching Mechanism</b><br/>━━━━━━━━━━━━━━━━━<br/>Total: 27B parameters<br/>Active: 14B per timestep"]
+        
+        subgraph EXPERTS["Dual Expert System"]
+            direction LR
+            HIGH["<b>high_noise_model</b><br/>━━━━━━━━━━<br/>Active: t ≥ 0.875<br/>Focus: Layout,<br/>composition, structure<br/>Early denoising steps"]
+            
+            LOW["<b>low_noise_model</b><br/>━━━━━━━━━━<br/>Active: t < 0.875<br/>Focus: Details,<br/>refinement, textures<br/>Late denoising steps"]
+        end
+        
+        SWITCH["<b>_prepare_model_for_timestep()</b><br/>━━━━━━━━━━━━━━━━━<br/>if t >= boundary:<br/>    active = high_noise_model<br/>else:<br/>    active = low_noise_model<br/><br/>• Offloads inactive expert to CPU<br/>• Loads active expert to GPU"]
+    end
+
+    subgraph SAMPLING["📊 DIFFUSION SAMPLING"]
+        direction TB
+        
+        subgraph SOLVERS["Flow Matching Solvers"]
+            direction LR
+            UNIPC["<b>FlowUniPCMultistepScheduler</b><br/><i>wan/utils/fm_solvers_unipc.py</i><br/>━━━━━━━━━━<br/>• Default solver<br/>• ~40 steps typical"]
+            
+            DPM["<b>FlowDPMSolverMultistepScheduler</b><br/><i>wan/utils/fm_solvers.py</i><br/>━━━━━━━━━━<br/>• Alternative DPM++<br/>• Configurable steps"]
+        end
+        
+        CFG["<b>Classifier-Free Guidance</b><br/>━━━━━━━━━━━━━━━━━<br/>noise_pred = uncond + scale × (cond - uncond)<br/><br/>• Two forward passes per step<br/>• guide_scale: typically 4.0-5.0"]
+        
+        LOOP["<b>Denoising Loop</b><br/>━━━━━━━━━━━━━━━━━<br/>for t in timesteps:<br/>    1. Select expert (high/low noise)<br/>    2. Forward pass (cond & uncond)<br/>    3. Apply CFG<br/>    4. Scheduler step<br/>    5. Update latent"]
+    end
+
+    subgraph DISTRIBUTED["🌐 DISTRIBUTED COMPUTING"]
+        direction TB
+        
+        subgraph FSDP_LAYER["FSDP - Fully Sharded Data Parallel"]
+            FSDP_DESC["<b>wan/distributed/fsdp.py</b><br/>━━━━━━━━━━━━━━━━━<br/>• ShardingStrategy.FULL_SHARD<br/>• MixedPrecision (bf16/fp32)<br/>• Auto-wrap by blocks<br/><br/>Shards both T5 and DiT<br/>across multiple GPUs"]
+        end
+        
+        subgraph SP["Ulysses Sequence Parallelism"]
+            SP_DESC["<b>wan/distributed/ulysses.py</b><br/>━━━━━━━━━━━━━━━━━<br/>• Splits attention heads across GPUs<br/>• AllGather for Q, AllToAll for KV<br/>• Reduces per-GPU memory<br/><br/>8 GPUs → 8× head distribution<br/>Each GPU: 2 heads (of 16)"]
+            
+            SEQ_PAR["<b>wan/distributed/sequence_parallel.py</b><br/>━━━━━━━━━━━━━━━━━<br/>• sp_attn_forward: Modified attention<br/>• sp_dit_forward: Modified DiT forward<br/>• Handles sequence splitting/gathering"]
+        end
+    end
+
+    subgraph OUTPUT["💾 OUTPUT"]
+        direction LR
+        DECODE["<b>VAE Decode</b><br/>━━━━━━━━<br/>Latent → Video<br/>[16, T/4, H/8, W/8]<br/>→ [3, T, H, W]"]
+        
+        SAVE["<b>save_video()</b><br/>━━━━━━━━<br/>• H.264 codec<br/>• 16 fps default<br/>• MP4 format"]
+        
+        MERGE["<b>merge_video_audio()</b><br/>━━━━━━━━<br/>For S2V task:<br/>Combines video<br/>with audio track"]
+    end
+
+    subgraph DATA_FLOW["📈 DATA FLOW SHAPES"]
+        direction LR
+        DF1["Text: str"]
+        DF2["→ T5: [B, 512, 4096]"]
+        DF3["Noise: [16, T/4, H/8, W/8]"]
+        DF4["→ DiT: Iterative denoising"]
+        DF5["Latent: [16, T/4, H/8, W/8]"]
+        DF6["→ VAE: [3, T, H, W]"]
+    end
+
+    %% Connections
+    CLI --> WAN_CONFIGS
+    WAN_CONFIGS --> PIPELINES
+    
+    T2V_DESC --> T5
+    T2V_DESC --> VAE
+    T2V_DESC --> DIT_MAIN
+    T2V_DESC --> MOE_DESC
+    
+    I2V_DESC --> T5
+    I2V_DESC --> VAE
+    I2V_DESC --> DIT_MAIN
+    I2V_DESC --> MOE_DESC
+    
+    TI2V_DESC --> T5
+    TI2V_DESC --> VAE
+    TI2V_DESC --> DIT_MAIN
+    
+    S2V_DESC --> T5
+    S2V_DESC --> VAE
+    S2V_DESC --> AUDIO
+    S2V_DESC --> DIT_MAIN
+    
+    ANIM_DESC --> T5
+    ANIM_DESC --> VAE
+    ANIM_DESC --> DIT_MAIN
+    
+    T5 --> DIT_MAIN
+    VAE --> DIT_MAIN
+    
+    DIT_MAIN --> ATTN
+    DIT_MAIN --> COMPONENTS
+    
+    EXPERTS --> SWITCH
+    SWITCH --> SAMPLING
+    
+    UNIPC --> LOOP
+    DPM --> LOOP
+    CFG --> LOOP
+    
+    FSDP_DESC --> DIT_MAIN
+    FSDP_DESC --> T5
+    SP_DESC --> DIT_MAIN
+    SEQ_PAR --> SP_DESC
+    
+    LOOP --> DECODE
+    DECODE --> SAVE
+    DECODE --> MERGE
+
+    %% Styling
+    classDef entry fill:#2d5a7b,stroke:#00d4ff,stroke-width:3px,color:#fff
+    classDef config fill:#1a3a5c,stroke:#00a4cc,stroke-width:2px,color:#fff
+    classDef pipeline fill:#4a2d5c,stroke:#d400ff,stroke-width:2px,color:#fff
+    classDef core fill:#2d4a2d,stroke:#00ff88,stroke-width:2px,color:#fff
+    classDef moe fill:#5c3a2d,stroke:#ff8800,stroke-width:2px,color:#fff
+    classDef sampling fill:#3a2d5c,stroke:#8800ff,stroke-width:2px,color:#fff
+    classDef dist fill:#2d3a5c,stroke:#0088ff,stroke-width:2px,color:#fff
+    classDef output fill:#5c2d3a,stroke:#ff0088,stroke-width:2px,color:#fff
+    
+    class CLI entry
+    class WAN_CONFIGS,PARAMS,P1,P2,P3,P4 config
+    class T2V_DESC,I2V_DESC,TI2V_DESC,S2V_DESC,ANIM_DESC pipeline
+    class T5,VAE,AUDIO,DIT_MAIN,SELF,CROSS,FFN,PATCH,TIME,HEAD core
+    class MOE_DESC,HIGH,LOW,SWITCH moe
+    class UNIPC,DPM,CFG,LOOP sampling
+    class FSDP_DESC,SP_DESC,SEQ_PAR dist
+    class DECODE,SAVE,MERGE output
+

@@ -1,0 +1,26 @@
+%% DIAGRAM 3: MOE EXPERT SWITCHING MECHANISM
+graph TD
+    Start["Start Denoising\nt = 1.0 high noise"] --> CheckT{"Check timestep t\nand SNR"}
+    
+    CheckT -->|"t >= 0.875\nHigh noise level"| UseHigh["Use High-Noise Expert\nFocus on:\n- Overall composition\n- Subject placement\n- Scene layout"]
+    
+    CheckT -->|"t < 0.875\nLow noise level"| UseLow["Use Low-Noise Expert\nFocus on:\n- Fine textures\n- Sharp details\n- Color refinement"]
+    
+    UseHigh --> Forward1["Forward Pass\nmodel latent, t, text"]
+    UseLow --> Forward2["Forward Pass\nmodel latent, t, text"]
+    
+    Forward1 --> Predict1["Predict velocity v"]
+    Forward2 --> Predict2["Predict velocity v"]
+    
+    Predict1 --> Update["Update latent:\nz = z + dt * v"]
+    Predict2 --> Update
+    
+    Update --> CheckDone{"More steps?"}
+    CheckDone -->|Yes| CheckT
+    CheckDone -->|No| Complete["Denoising Complete"]
+
+    style CheckT fill:#fff9c4
+    style UseHigh fill:#ffccbc
+    style UseLow fill:#c5e1a5
+    style Complete fill:#c8e6c9
+

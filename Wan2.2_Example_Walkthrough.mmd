@@ -1,0 +1,126 @@
+%% ============================================================================
+%% CONCRETE EXAMPLE: GENERATING "A CAT WALKING IN SNOW"
+%% ============================================================================
+
+graph TB
+    Start["👤 USER TYPES:<br/>python generate.py --task t2v-A14B<br/>--prompt 'A cat walking in snow'<br/>--size 1280*720"] --> Load["📦 LOAD MODELS<br/>T5-XXL: 4.7GB<br/>VAE: 335MB<br/>High-Noise Expert: 14B params<br/>Low-Noise Expert: 14B params"]
+    
+    Load --> Step1["⚙️ STEP 1: TEXT ENCODING<br/>Input: 'A cat walking in snow'<br/>T5 tokenizes → [247, 2359, 3048, 16, 2640]<br/>Embeds → tensor [1, 512, 4096]<br/>Time: ~0.5 seconds"]
+    
+    Step1 --> Step2["🎲 STEP 2: INIT NOISE<br/>Shape: [1, 45, 16, 40, 40]<br/>C=16 channels, T=45 frames<br/>H=40, W=40 (latent space)<br/>Random Gaussian N(0, 1)<br/>Time: ~0.1 seconds"]
+    
+    Step2 --> Step3["🔄 STEP 3: DENOISING (40 steps)<br/>Start with pure noise<br/>Gradually remove noise<br/>Guided by text embedding"]
+    
+    Step3 --> T1["⏱️ Timestep 40/40 (t=1.0)<br/>Noise level: VERY HIGH<br/>Expert: HIGH-NOISE<br/>Action: Plan overall scene<br/>Decision: Cat in center, snow around<br/>Time: ~8 seconds"]
+    
+    T1 --> T2["⏱️ Timestep 30/40 (t=0.75)<br/>Noise level: HIGH<br/>Expert: HIGH-NOISE<br/>Action: Define cat shape<br/>Decision: Four legs, tail, head<br/>Time: ~8 seconds"]
+    
+    T2 --> T3["⏱️ Timestep 20/40 (t=0.5)<br/>Noise level: MEDIUM<br/>Expert: HIGH-NOISE<br/>Action: Add motion blur<br/>Decision: Walking animation<br/>Time: ~8 seconds"]
+    
+    T3 --> Switch["⚡ EXPERT SWITCH at t=0.35<br/>Boundary crossed: t < 0.875<br/>Switch from High → Low noise expert<br/>Reason: Need fine details now"]
+    
+    Switch --> T4["⏱️ Timestep 10/40 (t=0.25)<br/>Noise level: LOW<br/>Expert: LOW-NOISE<br/>Action: Add fur texture<br/>Decision: Fluffy white fur<br/>Time: ~8 seconds"]
+    
+    T4 --> T5["⏱️ Timestep 5/40 (t=0.125)<br/>Noise level: VERY LOW<br/>Expert: LOW-NOISE<br/>Action: Refine snowflakes<br/>Decision: Individual flakes visible<br/>Time: ~8 seconds"]
+    
+    T5 --> T6["⏱️ Timestep 1/40 (t=0.025)<br/>Noise level: MINIMAL<br/>Expert: LOW-NOISE<br/>Action: Final polish<br/>Decision: Sharp edges, colors<br/>Time: ~8 seconds"]
+    
+    T6 --> CFG["🎯 CLASSIFIER-FREE GUIDANCE<br/>Each step uses 2 forward passes:<br/>1. With text (conditional)<br/>2. Without text (unconditional)<br/>Final = uncond + 4.0 × (cond - uncond)<br/>Effect: Stronger prompt adherence"]
+    
+    CFG --> Decode["🎨 VAE DECODE<br/>Input: [1, 45, 16, 40, 40] latent<br/>Output: [1, 45, 3, 720, 1280] pixels<br/>Upscale: 40→720 (18×), 40→1280 (32×)<br/>Time: ~30 seconds"]
+    
+    Decode --> Save["💾 SAVE VIDEO<br/>Format: MP4<br/>Codec: H.264<br/>FPS: 16<br/>Duration: 5.06 seconds<br/>Size: ~15 MB<br/>Time: ~5 seconds"]
+    
+    Save --> Result["✅ RESULT<br/>Output: t2v-A14B_1280x720_A_cat_walking_in_snow.mp4<br/>Total time: ~6 minutes<br/>Memory used: ~75 GB<br/>Quality: High-resolution, realistic motion"]
+
+    style Start fill:#e3f2fd
+    style Switch fill:#ffccbc
+    style CFG fill:#fff9c4
+    style Result fill:#c8e6c9
+    style T1 fill:#ffebee
+    style T2 fill:#ffebee
+    style T3 fill:#ffebee
+    style T4 fill:#e8f5e9
+    style T5 fill:#e8f5e9
+    style T6 fill:#e8f5e9
+
+%% ============================================================================
+%% DETAILED BREAKDOWN
+%% ============================================================================
+%% 
+%% 📐 TENSOR SHAPES EXPLAINED:
+%% 
+%% Text Embedding: [1, 512, 4096]
+%%   1 = batch size
+%%   512 = sequence length (max tokens)
+%%   4096 = embedding dimension
+%% 
+%% Latent Space: [1, 45, 16, 40, 40]
+%%   1 = batch size
+%%   45 = frames (81 original / 2 + 1 due to VAE compression)
+%%   16 = channels (VAE latent channels)
+%%   40 = height in latent space (720 / 18)
+%%   40 = width in latent space (1280 / 32)
+%% 
+%% Video Output: [1, 45, 3, 720, 1280]
+%%   1 = batch size
+%%   45 = frames
+%%   3 = RGB channels
+%%   720 = height in pixels
+%%   1280 = width in pixels
+%% 
+%% 🧮 COMPUTATION BREAKDOWN:
+%% 
+%% Per Timestep:
+%%   • Forward pass: 14B parameters × 2 (cond + uncond) = 28B operations
+%%   • Expert selection: < 1M operations (negligible)
+%%   • Scheduler step: ~100M operations
+%%   • Total: ~28.1B FLOPs per timestep
+%% 
+%% Full Generation:
+%%   • 40 timesteps × 28.1B = 1.124 TFLOPs
+%%   • VAE encode/decode: ~50 GFLOPs
+%%   • Total: ~1.174 TFLOPs
+%% 
+%% On A100 (312 TFLOPS):
+%%   • Theoretical time: 1.174 / 312 = 3.8 seconds
+%%   • Actual time: ~6 minutes (due to memory, I/O, overhead)
+%% 
+%% 💡 WHY MoE IS EFFICIENT:
+%% 
+%% Traditional 27B dense model:
+%%   • All 27B params used every step
+%%   • Total: 40 steps × 27B × 2 = 2.16 TFLOPs
+%%   • Time: ~10-12 minutes
+%% 
+%% Wan2.2 MoE (27B total, 14B active):
+%%   • Only 14B params used per step
+%%   • Total: 40 steps × 14B × 2 = 1.12 TFLOPs
+%%   • Time: ~6 minutes
+%%   • Speedup: 2× faster! ⚡
+%% 
+%% But with 2× more total parameters:
+%%   • High-noise expert: Specialized for layout
+%%   • Low-noise expert: Specialized for details
+%%   • Result: Better quality + faster inference
+%% 
+%% 🎯 EXPERT SPECIALIZATION:
+%% 
+%% High-Noise Expert (t ≥ 0.875):
+%%   • Trained on: Early denoising steps
+%%   • Learns: Global structure, composition, subject placement
+%%   • Example actions:
+%%     - Place cat in center of frame
+%%     - Add snow environment around
+%%     - Plan walking trajectory
+%% 
+%% Low-Noise Expert (t < 0.875):
+%%   • Trained on: Late denoising steps
+%%   • Learns: Fine details, textures, sharp edges
+%%   • Example actions:
+%%     - Add individual fur strands
+%%     - Create snowflake particles
+%%     - Sharpen cat whiskers
+%% 
+%% ============================================================================
+

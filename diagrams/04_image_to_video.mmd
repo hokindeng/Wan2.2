@@ -1,0 +1,23 @@
+%% DIAGRAM 4: IMAGE-TO-VIDEO WORKFLOW
+graph TB
+    InputImg["Input Image"] --> Resize["Resize and Crop\nMatch target size"]
+    InputTxt["Text Prompt"] --> T5I2V["T5 Encoding"]
+    
+    Resize --> VAEEnc["VAE Encode\nImage to Latent z0"]
+    VAEEnc --> FirstFrame["First frame latent\nz0 fixed"]
+    
+    NoiseRest["Random noise\nfor other frames"] --> MaskBlend["Mask Blending\nz = z0 + mask * noise"]
+    FirstFrame --> MaskBlend
+    
+    T5I2V --> Context["Text context"]
+    Context --> DenoisingI2V["Denoising Process\nGenerate motion"]
+    MaskBlend --> DenoisingI2V
+    
+    DenoisingI2V --> EachStep["Each timestep:\nPreserve z0\nDenoise rest"]
+    EachStep --> DecodeI2V["VAE Decode"]
+    DecodeI2V --> VideoOut["Video Output\nFirst frame matches input\nRest shows motion"]
+
+    style InputImg fill:#e1bee7
+    style MaskBlend fill:#fff9c4
+    style VideoOut fill:#c8e6c9
+

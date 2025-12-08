@@ -1,0 +1,141 @@
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#0d1b2a', 'primaryTextColor': '#e0e1dd', 'primaryBorderColor': '#778da9', 'lineColor': '#e63946', 'secondaryColor': '#1b263b', 'tertiaryColor': '#415a77', 'background': '#0d1b2a'}}}%%
+
+sequenceDiagram
+    autonumber
+    
+    participant User
+    participant CLI as generate.py
+    participant Config as WAN_CONFIGS
+    participant Pipeline as WanT2V/I2V/S2V
+    participant T5 as T5EncoderModel
+    participant VAE as Wan2_1_VAE
+    participant DiT as WanModel (DiT)
+    participant MoE as Expert Selector
+    participant Solver as FlowUniPC/DPM++
+    participant GPU as CUDA Device
+    
+    User->>CLI: python generate.py --task t2v-A14B --prompt "..."
+    
+    Note over CLI: Parse arguments & validate
+    CLI->>Config: Load WAN_CONFIGS[task]
+    Config-->>CLI: EasyDict config
+    
+    Note over CLI: Initialize distributed if needed
+    CLI->>CLI: init_distributed_group() if multi-GPU
+    
+    rect rgb(40, 60, 80)
+        Note over CLI,Pipeline: 1. PIPELINE INITIALIZATION
+        CLI->>Pipeline: WanT2V(config, checkpoint_dir, ...)
+        
+        Pipeline->>T5: T5EncoderModel(text_len=512, dtype=bf16)
+        Note over T5: Load umt5_xxl weights
+        T5-->>Pipeline: text_encoder ready
+        
+        Pipeline->>VAE: Wan2_1_VAE(z_dim=16)
+        Note over VAE: Load Encoder3d + Decoder3d
+        VAE-->>Pipeline: vae ready
+        
+        Pipeline->>DiT: WanModel.from_pretrained(low_noise_checkpoint)
+        Pipeline->>DiT: WanModel.from_pretrained(high_noise_checkpoint)
+        Note over DiT: 2 × 14B expert models loaded
+        DiT-->>Pipeline: low_noise_model, high_noise_model
+    end
+    
+    rect rgb(60, 40, 80)
+        Note over CLI,Pipeline: 2. GENERATION CALL
+        CLI->>Pipeline: generate(prompt, size, frame_num, ...)
+        
+        Note over Pipeline: Calculate target shape
+        Pipeline->>Pipeline: target_shape = (16, T//4+1, H//8, W//8)
+    end
+    
+    rect rgb(40, 80, 60)
+        Note over Pipeline,T5: 3. TEXT ENCODING
+        Pipeline->>T5: encode([prompt], device)
+        T5->>T5: tokenize(prompt) → ids [B, 512]
+        T5->>T5: T5Encoder forward pass
+        Note over T5: 24 layers, 64 heads, 4096 dim
+        T5-->>Pipeline: context [B, seq_len, 4096]
+        
+        Pipeline->>T5: encode([negative_prompt], device)
+        T5-->>Pipeline: context_null [B, seq_len, 4096]
+    end
+    
+    rect rgb(80, 60, 40)
+        Note over Pipeline,GPU: 4. NOISE INITIALIZATION
+        Pipeline->>GPU: torch.randn(target_shape, generator=seed)
+        GPU-->>Pipeline: noise [16, T//4+1, H//8, W//8]
+        Pipeline->>Pipeline: latents = [noise]
+    end
+    
+    rect rgb(60, 80, 80)
+        Note over Pipeline,Solver: 5. SCHEDULER SETUP
+        Pipeline->>Solver: FlowUniPCMultistepScheduler(num_train_timesteps=1000)
+        Solver->>Solver: set_timesteps(steps=40, shift=5.0)
+        Solver-->>Pipeline: timesteps tensor (40 values, 1000→0)
+    end
+    
+    rect rgb(100, 40, 60)
+        Note over Pipeline,GPU: 6. DENOISING LOOP (40 iterations)
+        
+        loop For each timestep t in timesteps
+            Pipeline->>MoE: _prepare_model_for_timestep(t, boundary=875)
+            
+            alt t >= 875 (High Noise Phase)
+                MoE->>DiT: Activate high_noise_model
+                MoE->>GPU: Offload low_noise_model to CPU
+                Note over DiT: Focus: Layout, composition
+            else t < 875 (Low Noise Phase)
+                MoE->>DiT: Activate low_noise_model
+                MoE->>GPU: Offload high_noise_model to CPU
+                Note over DiT: Focus: Details, refinement
+            end
+            
+            Note over Pipeline,DiT: Conditional Forward Pass
+            Pipeline->>DiT: model(latents, t, context, seq_len)
+            
+            DiT->>DiT: patch_embedding(x) → [B, L, 2048]
+            DiT->>DiT: time_embedding(t) → [B, L, 6, 2048]
+            DiT->>DiT: text_embedding(context) → [B, 512, 2048]
+            
+            loop 32 WanAttentionBlocks
+                DiT->>DiT: self_attn(x, RoPE) → [B, L, 2048]
+                DiT->>DiT: cross_attn(x, text) → [B, L, 2048]
+                DiT->>DiT: ffn(x) → [B, L, 2048]
+            end
+            
+            DiT->>DiT: head(x) → unpatchify
+            DiT-->>Pipeline: noise_pred_cond [16, T', H', W']
+            
+            Note over Pipeline,DiT: Unconditional Forward Pass
+            Pipeline->>DiT: model(latents, t, context_null, seq_len)
+            DiT-->>Pipeline: noise_pred_uncond [16, T', H', W']
+            
+            Note over Pipeline: Classifier-Free Guidance
+            Pipeline->>Pipeline: noise_pred = uncond + scale*(cond - uncond)
+            
+            Note over Pipeline,Solver: Scheduler Step
+            Pipeline->>Solver: step(noise_pred, t, latents)
+            Solver->>Solver: Apply flow matching update
+            Solver-->>Pipeline: updated latents
+        end
+    end
+    
+    rect rgb(40, 100, 80)
+        Note over Pipeline,VAE: 7. VAE DECODING
+        Pipeline->>VAE: decode(latents)
+        VAE->>VAE: conv2(z) → expand channels
+        VAE->>VAE: Decoder3d.middle → residual + attention
+        VAE->>VAE: Decoder3d.upsamples → upsample3d/2d
+        VAE->>VAE: head → [B, 3, T, H, W]
+        VAE-->>Pipeline: video tensor [-1, 1]
+    end
+    
+    rect rgb(80, 40, 100)
+        Note over Pipeline,User: 8. SAVE OUTPUT
+        Pipeline->>CLI: return video [3, T, H, W]
+        CLI->>CLI: save_video(video, fps=16)
+        Note over CLI: H.264 encoding → MP4
+        CLI-->>User: task_size_prompt_timestamp.mp4
+    end
+

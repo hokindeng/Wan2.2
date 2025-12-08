@@ -1,0 +1,41 @@
+%% DIAGRAM 1: OVERALL SYSTEM ARCHITECTURE
+graph TB
+    subgraph Models["Wan 2.2 Model Variants"]
+        T2V["T2V-A14B\nText to Video\n27B total / 14B active\nMoE Architecture"]
+        I2V["I2V-A14B\nImage to Video\n27B total / 14B active\nMoE Architecture"]
+        TI2V["TI2V-5B\nText+Image to Video\n5B parameters\nDense Model"]
+        S2V["S2V-14B\nSpeech to Video\n14B parameters\nAudio-driven"]
+        Animate["Animate-14B\nCharacter Animation\n14B parameters\nMotion replication"]
+    end
+
+    subgraph Core["Core Components"]
+        VAE1["Wan2.1 VAE\nCompression: 4x8x8\nFor 14B models"]
+        VAE2["Wan2.2 VAE\nCompression: 4x16x16\nFor 5B model"]
+        T5["T5-XXL Encoder\nText understanding\n512 token length"]
+        DiT["Diffusion Transformer\n40 layers, 5120 dim\nFlow matching"]
+    end
+
+    subgraph MoE["MoE Expert System"]
+        HighNoise["High-Noise Expert\n14B params\nEarly denoising\nLayout planning"]
+        LowNoise["Low-Noise Expert\n14B params\nLate denoising\nDetail refinement"]
+        Switch["Expert Switching\nBased on SNR\nBoundary at t=0.875"]
+    end
+
+    subgraph Distributed["Distributed Training"]
+        FSDP["FSDP\nModel sharding\nAcross GPUs"]
+        Ulysses["Ulysses\nSequence parallelism\nAttention heads"]
+        Offload["Model Offloading\nCPU/GPU memory\nmanagement"]
+    end
+
+    Models --> Core
+    T2V --> MoE
+    I2V --> MoE
+    Core --> DiT
+    DiT --> MoE
+    MoE --> Distributed
+
+    style Models fill:#e3f2fd
+    style Core fill:#f3e5f5
+    style MoE fill:#fff9c4
+    style Distributed fill:#e8f5e9
+

@@ -1,0 +1,25 @@
+%% DIAGRAM 5: SPEECH-TO-VIDEO WORKFLOW
+graph LR
+    Audio["Audio Input\nwav or mp3"] --> AudioEnc["Audio Encoder\nExtract features"]
+    RefImg["Reference Image\nCharacter face"] --> ImgEnc["VAE Encode"]
+    Prompt["Optional Text"] --> T5S2V["T5 Encode"]
+    
+    AudioEnc --> AudioFeat["Audio features\nTemporal sync"]
+    ImgEnc --> RefLatent["Reference latent"]
+    T5S2V --> TextContext["Text context"]
+    
+    AudioFeat --> Motioner["Motion Generator\nAudio to Motion"]
+    Motioner --> MotionSeq["Motion sequence"]
+    
+    RefLatent --> DenoisingS2V["Denoising with\nAudio conditioning"]
+    MotionSeq --> DenoisingS2V
+    TextContext --> DenoisingS2V
+    
+    DenoisingS2V --> SyncCheck["Lip-sync check\nFrame alignment"]
+    SyncCheck --> DecodeS2V["VAE Decode"]
+    DecodeS2V --> TalkingVideo["Talking Video\nSynced with audio"]
+
+    style Audio fill:#bbdefb
+    style Motioner fill:#fff9c4
+    style TalkingVideo fill:#c8e6c9
+

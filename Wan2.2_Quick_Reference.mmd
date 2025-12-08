@@ -1,0 +1,114 @@
+%% ============================================================================
+%% WAN 2.2 QUICK REFERENCE - ONE PAGE OVERVIEW
+%% ============================================================================
+
+graph TB
+    subgraph Input["🎯 INPUT OPTIONS"]
+        T["Text Prompt"]
+        I["Image"]
+        A["Audio"]
+        TI["Text + Image"]
+    end
+
+    subgraph Models["🎬 5 MODEL VARIANTS"]
+        M1["T2V-A14B<br/>Text→Video<br/>27B MoE"]
+        M2["I2V-A14B<br/>Image→Video<br/>27B MoE"]
+        M3["TI2V-5B<br/>Text/Image→Video<br/>5B Dense"]
+        M4["S2V-14B<br/>Speech→Video<br/>14B"]
+        M5["Animate-14B<br/>Character Anim<br/>14B"]
+    end
+
+    subgraph Core["⚙️ CORE ARCHITECTURE"]
+        T5Comp["T5-XXL<br/>Text Encoder<br/>512 tokens"]
+        VAEComp["VAE 2.1/2.2<br/>Video Compression<br/>4×8×8 or 4×16×16"]
+        DiTComp["DiT Transformer<br/>40 layers<br/>5120 dim"]
+    end
+
+    subgraph MoE["⚡ MOE EXPERTS (for A14B)"]
+        HN["High-Noise Expert<br/>14B params<br/>t ≥ 0.875<br/>LAYOUT"]
+        LN["Low-Noise Expert<br/>14B params<br/>t < 0.875<br/>DETAILS"]
+    end
+
+    subgraph Pipeline["🔄 GENERATION PIPELINE"]
+        S1["1. Encode Input<br/>T5 for text<br/>VAE for image"]
+        S2["2. Init Noise<br/>Random Gaussian"]
+        S3["3. Denoising Loop<br/>40 steps"]
+        S4["4. Expert Switch<br/>at boundary"]
+        S5["5. CFG<br/>Classifier-free<br/>guidance"]
+        S6["6. VAE Decode<br/>Latent→Video"]
+    end
+
+    subgraph Output["📹 OUTPUT"]
+        V1["720p @ 16fps<br/>81 frames"]
+        V2["480p @ 16fps<br/>81 frames"]
+        V3["720p @ 24fps<br/>121 frames<br/>TI2V only"]
+    end
+
+    subgraph Distributed["🌐 MULTI-GPU"]
+        D1["FSDP<br/>Model Sharding"]
+        D2["Ulysses<br/>Sequence Parallel"]
+        D3["Offload<br/>CPU/GPU Memory"]
+    end
+
+    T --> M1
+    I --> M2
+    TI --> M3
+    A --> M4
+    I --> M5
+
+    M1 --> Core
+    M2 --> Core
+    M3 --> Core
+    M4 --> Core
+    M5 --> Core
+
+    Core --> MoE
+    MoE --> Pipeline
+    Pipeline --> S1
+    S1 --> S2
+    S2 --> S3
+    S3 --> S4
+    S4 --> S5
+    S5 --> S6
+    S6 --> Output
+
+    Core --> Distributed
+
+    style Input fill:#e3f2fd
+    style Models fill:#f3e5f5
+    style Core fill:#fff3e0
+    style MoE fill:#fff9c4
+    style Pipeline fill:#ffe0b2
+    style Output fill:#c8e6c9
+    style Distributed fill:#e8f5e9
+
+%% ============================================================================
+%% QUICK FACTS
+%% ============================================================================
+%% 
+%% 📊 MODEL SIZES:
+%% • T2V-A14B: 27B total (14B active per step) - MoE
+%% • I2V-A14B: 27B total (14B active per step) - MoE
+%% • TI2V-5B: 5B - Dense model, fastest inference
+%% • S2V-14B: 14B - Audio-driven generation
+%% • Animate-14B: 14B - Character animation
+%% 
+%% 🚀 PERFORMANCE:
+%% • 8×A100: ~8 min for 720p video (T2V-A14B)
+%% • 1×RTX4090: ~9 min for 720p video (TI2V-5B)
+%% • Memory: 60-80GB per GPU with optimization
+%% 
+%% 💡 KEY INNOVATION:
+%% MoE with 2 specialized experts:
+%% • High-Noise: Handles early steps (layout, composition)
+%% • Low-Noise: Handles late steps (details, refinement)
+%% Result: 2× parameters, same compute cost!
+%% 
+%% 🎨 OUTPUT QUALITY:
+%% • Resolution: 480p-720p
+%% • Frame rate: 16-24 fps
+%% • Duration: 5 seconds (81-121 frames)
+%% • Quality: State-of-the-art among open models
+%% 
+%% ============================================================================
+

@@ -1,0 +1,25 @@
+%% DIAGRAM 6: TRAINING VS INFERENCE
+graph TD
+    subgraph Training["Training Phase"]
+        TrainData["Video Dataset\n+ Text captions"] --> Corrupt["Add noise\nat timestep t"]
+        Corrupt --> TrainModel["Model predicts\nvelocity v"]
+        TrainModel --> Loss["Flow matching loss\nL = MSE of v_pred - v_true"]
+        Loss --> Backprop["Backpropagation\nUpdate weights"]
+        Backprop --> TrainData
+    end
+
+    subgraph Inference["Inference Phase"]
+        InfPrompt["Text prompt"] --> InfT5["T5 Encode"]
+        InfNoise["Pure noise z0"] --> InfDenoise["Iterative denoising"]
+        InfT5 --> InfDenoise
+        InfDenoise --> InfCFG["Classifier-free\nguidance"]
+        InfCFG --> InfScheduler["UniPC or DPM++\nscheduler"]
+        InfScheduler --> InfVAE["VAE Decode"]
+        InfVAE --> InfVideo["Generated Video"]
+    end
+
+    Training -.->|"Trained weights"| Inference
+
+    style Training fill:#ffebee
+    style Inference fill:#e8f5e9
+

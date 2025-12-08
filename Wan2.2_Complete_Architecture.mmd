@@ -1,0 +1,276 @@
+%% ============================================================================
+%% COMPLETE WAN 2.2 ARCHITECTURE AND WORKFLOW
+%% ============================================================================
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 1: OVERALL SYSTEM ARCHITECTURE
+%% ----------------------------------------------------------------------------
+graph TB
+    subgraph Models["🎬 Wan 2.2 Model Variants"]
+        T2V["T2V-A14B<br/>Text to Video<br/>27B total / 14B active<br/>MoE Architecture"]
+        I2V["I2V-A14B<br/>Image to Video<br/>27B total / 14B active<br/>MoE Architecture"]
+        TI2V["TI2V-5B<br/>Text+Image to Video<br/>5B parameters<br/>Dense Model"]
+        S2V["S2V-14B<br/>Speech to Video<br/>14B parameters<br/>Audio-driven"]
+        Animate["Animate-14B<br/>Character Animation<br/>14B parameters<br/>Motion replication"]
+    end
+
+    subgraph Core["🧠 Core Components"]
+        VAE1["Wan2.1 VAE<br/>Compression: 4×8×8<br/>For 14B models"]
+        VAE2["Wan2.2 VAE<br/>Compression: 4×16×16<br/>For 5B model"]
+        T5["T5-XXL Encoder<br/>Text understanding<br/>512 token length"]
+        DiT["Diffusion Transformer<br/>40 layers, 5120 dim<br/>Flow matching"]
+    end
+
+    subgraph MoE["⚡ MoE Expert System"]
+        HighNoise["High-Noise Expert<br/>14B params<br/>Early denoising<br/>Layout planning"]
+        LowNoise["Low-Noise Expert<br/>14B params<br/>Late denoising<br/>Detail refinement"]
+        Switch["Expert Switching<br/>Based on SNR<br/>Boundary at t=0.875"]
+    end
+
+    subgraph Distributed["🌐 Distributed Training"]
+        FSDP["FSDP<br/>Model sharding<br/>Across GPUs"]
+        Ulysses["Ulysses<br/>Sequence parallelism<br/>Attention heads"]
+        Offload["Model Offloading<br/>CPU/GPU memory<br/>management"]
+    end
+
+    Models --> Core
+    T2V --> MoE
+    I2V --> MoE
+    Core --> DiT
+    DiT --> MoE
+    MoE --> Distributed
+
+    style Models fill:#e3f2fd
+    style Core fill:#f3e5f5
+    style MoE fill:#fff9c4
+    style Distributed fill:#e8f5e9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 2: VIDEO GENERATION PIPELINE (T2V Example)
+%% ----------------------------------------------------------------------------
+graph LR
+    Input["📝 Text Prompt<br/>A cat walking in snow"] --> T5Enc["T5 Encoder<br/>Convert to embeddings"]
+    
+    T5Enc --> PosEmb["Positive embedding"]
+    T5Enc --> NegEmb["Negative embedding"]
+    
+    Noise["🎲 Random Noise<br/>Gaussian z₀"] --> Latent["Latent Space<br/>C×T×H×W"]
+    
+    PosEmb --> Denoising
+    NegEmb --> Denoising
+    Latent --> Denoising["🔄 Iterative Denoising<br/>40 steps"]
+    
+    Denoising --> Step1["Step 1: t=40<br/>High-Noise Expert<br/>Layout structure"]
+    Step1 --> Step2["Step 20: t=20<br/>Still High-Noise<br/>Coarse details"]
+    Step2 --> Switch2["⚡ Expert Switch<br/>at boundary"]
+    Switch2 --> Step3["Step 25: t=15<br/>Low-Noise Expert<br/>Fine details"]
+    Step3 --> Step4["Step 40: t=0<br/>Low-Noise Expert<br/>Final polish"]
+    
+    Step4 --> VAEDec["🎨 VAE Decoder<br/>Latent to pixels"]
+    VAEDec --> Video["🎬 Video Output<br/>81 frames @ 16fps<br/>720p resolution"]
+
+    style Input fill:#bbdefb
+    style Denoising fill:#fff9c4
+    style Switch2 fill:#ffccbc
+    style Video fill:#c8e6c9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 3: MOE EXPERT SWITCHING MECHANISM
+%% ----------------------------------------------------------------------------
+graph TD
+    Start["Start Denoising<br/>t = 1.0 high noise"] --> CheckT{"Check timestep t<br/>and SNR"}
+    
+    CheckT -->|"t ≥ 0.875<br/>High noise level"| UseHigh["Use High-Noise Expert<br/>Focus on:<br/>- Overall composition<br/>- Subject placement<br/>- Scene layout"]
+    
+    CheckT -->|"t < 0.875<br/>Low noise level"| UseLow["Use Low-Noise Expert<br/>Focus on:<br/>- Fine textures<br/>- Sharp details<br/>- Color refinement"]
+    
+    UseHigh --> Forward1["Forward Pass<br/>model latent, t, text"]
+    UseLow --> Forward2["Forward Pass<br/>model latent, t, text"]
+    
+    Forward1 --> Predict1["Predict velocity v"]
+    Forward2 --> Predict2["Predict velocity v"]
+    
+    Predict1 --> Update["Update latent:<br/>z = z + Δt × v"]
+    Predict2 --> Update
+    
+    Update --> CheckDone{"More steps?"}
+    CheckDone -->|Yes| CheckT
+    CheckDone -->|No| Complete["Denoising Complete"]
+
+    style CheckT fill:#fff9c4
+    style UseHigh fill:#ffccbc
+    style UseLow fill:#c5e1a5
+    style Complete fill:#c8e6c9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 4: IMAGE-TO-VIDEO WORKFLOW
+%% ----------------------------------------------------------------------------
+graph TB
+    InputImg["🖼️ Input Image"] --> Resize["Resize & Crop<br/>Match target size"]
+    InputTxt["📝 Text Prompt"] --> T5I2V["T5 Encoding"]
+    
+    Resize --> VAEEnc["VAE Encode<br/>Image → Latent z₀"]
+    VAEEnc --> FirstFrame["First frame latent<br/>z₀ fixed"]
+    
+    NoiseRest["Random noise<br/>for other frames"] --> MaskBlend["Mask Blending<br/>z = z₀ + mask × noise"]
+    FirstFrame --> MaskBlend
+    
+    T5I2V --> Context["Text context"]
+    Context --> DenoisingI2V["Denoising Process<br/>Generate motion"]
+    MaskBlend --> DenoisingI2V
+    
+    DenoisingI2V --> EachStep["Each timestep:<br/>Preserve z₀<br/>Denoise rest"]
+    EachStep --> DecodeI2V["VAE Decode"]
+    DecodeI2V --> VideoOut["🎬 Video Output<br/>First frame matches input<br/>Rest shows motion"]
+
+    style InputImg fill:#e1bee7
+    style MaskBlend fill:#fff9c4
+    style VideoOut fill:#c8e6c9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 5: SPEECH-TO-VIDEO WORKFLOW
+%% ----------------------------------------------------------------------------
+graph LR
+    Audio["🎵 Audio Input<br/>wav or mp3"] --> AudioEnc["Audio Encoder<br/>Extract features"]
+    RefImg["🖼️ Reference Image<br/>Character face"] --> ImgEnc["VAE Encode"]
+    Prompt["📝 Optional Text"] --> T5S2V["T5 Encode"]
+    
+    AudioEnc --> AudioFeat["Audio features<br/>Temporal sync"]
+    ImgEnc --> RefLatent["Reference latent"]
+    T5S2V --> TextContext["Text context"]
+    
+    AudioFeat --> Motioner["Motion Generator<br/>Audio → Motion"]
+    Motioner --> MotionSeq["Motion sequence"]
+    
+    RefLatent --> DenoisingS2V["Denoising with<br/>Audio conditioning"]
+    MotionSeq --> DenoisingS2V
+    TextContext --> DenoisingS2V
+    
+    DenoisingS2V --> SyncCheck["Lip-sync check<br/>Frame alignment"]
+    SyncCheck --> DecodeS2V["VAE Decode"]
+    DecodeS2V --> TalkingVideo["🎬 Talking Video<br/>Synced with audio"]
+
+    style Audio fill:#bbdefb
+    style Motioner fill:#fff9c4
+    style TalkingVideo fill:#c8e6c9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 6: TRAINING VS INFERENCE
+%% ----------------------------------------------------------------------------
+graph TD
+    subgraph Training["🎓 Training Phase"]
+        TrainData["Video Dataset<br/>+ Text captions"] --> Corrupt["Add noise<br/>at timestep t"]
+        Corrupt --> TrainModel["Model predicts<br/>velocity v"]
+        TrainModel --> Loss["Flow matching loss<br/>L = ||v_pred - v_true||²"]
+        Loss --> Backprop["Backpropagation<br/>Update weights"]
+        Backprop --> TrainData
+    end
+
+    subgraph Inference["🎯 Inference Phase"]
+        InfPrompt["Text prompt"] --> InfT5["T5 Encode"]
+        InfNoise["Pure noise z₀"] --> InfDenoise["Iterative denoising"]
+        InfT5 --> InfDenoise
+        InfDenoise --> InfCFG["Classifier-free<br/>guidance"]
+        InfCFG --> InfScheduler["UniPC or DPM++<br/>scheduler"]
+        InfScheduler --> InfVAE["VAE Decode"]
+        InfVAE --> InfVideo["Generated Video"]
+    end
+
+    Training -.->|"Trained weights"| Inference
+
+    style Training fill:#ffebee
+    style Inference fill:#e8f5e9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 7: MEMORY OPTIMIZATION STRATEGIES
+%% ----------------------------------------------------------------------------
+graph TB
+    Problem["⚠️ Memory Challenge<br/>27B parameters<br/>+ activations<br/>= 100+ GB needed"] --> Solutions["💡 Optimization Solutions"]
+    
+    Solutions --> FSDP2["FSDP Sharding<br/>Split model across GPUs<br/>Each GPU holds 1/N"]
+    Solutions --> Offload2["Model Offloading<br/>Move to CPU when idle<br/>Load when needed"]
+    Solutions --> SP["Sequence Parallelism<br/>Split attention heads<br/>Ulysses algorithm"]
+    Solutions --> GradCheck["Gradient Checkpointing<br/>Recompute activations<br/>Trade compute for memory"]
+    Solutions --> BF16["BF16 Precision<br/>Half memory vs FP32<br/>Stable training"]
+    
+    FSDP2 --> Result["✅ Fits on 8×80GB GPUs<br/>or 1×80GB with offload"]
+    Offload2 --> Result
+    SP --> Result
+    GradCheck --> Result
+    BF16 --> Result
+
+    style Problem fill:#ffcdd2
+    style Solutions fill:#fff9c4
+    style Result fill:#c8e6c9
+
+%% ----------------------------------------------------------------------------
+%% DIAGRAM 8: COMPLETE GENERATION PIPELINE
+%% ----------------------------------------------------------------------------
+graph TD
+    User["👤 User Input"] --> CLI["CLI Command<br/>python generate.py<br/>--task t2v-A14B"]
+    
+    CLI --> LoadCheckpoint["Load Checkpoint<br/>T5 + VAE + DiT"]
+    LoadCheckpoint --> InitModels["Initialize Models<br/>Set device, dtype"]
+    
+    InitModels --> Branch{"Task Type?"}
+    
+    Branch -->|Text| T2VPipe["T2V Pipeline"]
+    Branch -->|"Text+Image"| TI2VPipe["TI2V Pipeline"]
+    Branch -->|"Image"| I2VPipe["I2V Pipeline"]
+    Branch -->|Audio| S2VPipe["S2V Pipeline"]
+    Branch -->|Animation| AnimPipe["Animate Pipeline"]
+    
+    T2VPipe --> CommonGen["Common Generation Steps:<br/>1. Encode inputs<br/>2. Init noise<br/>3. Setup scheduler"]
+    TI2VPipe --> CommonGen
+    I2VPipe --> CommonGen
+    S2VPipe --> CommonGen
+    AnimPipe --> CommonGen
+    
+    CommonGen --> Loop["Denoising Loop:<br/>For each timestep"]
+    
+    Loop --> SelectExpert{"Select Expert<br/>based on t"}
+    SelectExpert -->|"High noise"| Expert1["High-Noise Model"]
+    SelectExpert -->|"Low noise"| Expert2["Low-Noise Model"]
+    
+    Expert1 --> CFGStep["Apply CFG<br/>Combine cond/uncond"]
+    Expert2 --> CFGStep
+    
+    CFGStep --> SchedulerUpdate["Scheduler Step<br/>Update latent"]
+    SchedulerUpdate --> CheckLoop{"More steps?"}
+    CheckLoop -->|Yes| Loop
+    CheckLoop -->|No| Decode["VAE Decode<br/>Latent → Pixels"]
+    
+    Decode --> Save["Save Video<br/>MP4 with ffmpeg"]
+    Save --> Done["✅ Complete"]
+
+    style User fill:#e1f5ff
+    style Branch fill:#fff9c4
+    style SelectExpert fill:#ffccbc
+    style Done fill:#c8e6c9
+
+%% ============================================================================
+%% LEGEND AND KEY CONCEPTS
+%% ============================================================================
+%% 
+%% KEY TERMS:
+%% - MoE: Mixture of Experts - Multiple specialized models
+%% - SNR: Signal-to-Noise Ratio - Determines expert switching
+%% - CFG: Classifier-Free Guidance - Improves prompt adherence
+%% - FSDP: Fully Sharded Data Parallel - Model parallelism
+%% - DiT: Diffusion Transformer - Core generative model
+%% - VAE: Variational Autoencoder - Compression/decompression
+%% - Flow Matching: Training objective for diffusion models
+%% 
+%% RESOLUTIONS SUPPORTED:
+%% - T2V/I2V/S2V: 480p (832×480) or 720p (1280×720)
+%% - TI2V: 720p (1280×704 or 704×1280)
+%% - Frame rate: 16 fps (default) or 24 fps (TI2V-5B)
+%% - Frame count: 81 frames (5 seconds) typical
+%% 
+%% PERFORMANCE:
+%% - T2V-A14B: ~8 min on 8×A100 GPUs (720p, 81 frames)
+%% - TI2V-5B: ~9 min on 1×RTX 4090 (720p, 81 frames)
+%% - Memory: 60-80GB per GPU with FSDP
+%% 
+%% ============================================================================
+

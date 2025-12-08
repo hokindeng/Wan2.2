@@ -1,0 +1,20 @@
+%% DIAGRAM 7: MEMORY OPTIMIZATION STRATEGIES
+graph TB
+    Problem["Memory Challenge\n27B parameters\n+ activations\n= 100+ GB needed"] --> Solutions["Optimization Solutions"]
+    
+    Solutions --> FSDP2["FSDP Sharding\nSplit model across GPUs\nEach GPU holds 1/N"]
+    Solutions --> Offload2["Model Offloading\nMove to CPU when idle\nLoad when needed"]
+    Solutions --> SP["Sequence Parallelism\nSplit attention heads\nUlysses algorithm"]
+    Solutions --> GradCheck["Gradient Checkpointing\nRecompute activations\nTrade compute for memory"]
+    Solutions --> BF16["BF16 Precision\nHalf memory vs FP32\nStable training"]
+    
+    FSDP2 --> Result["Fits on 8x80GB GPUs\nor 1x80GB with offload"]
+    Offload2 --> Result
+    SP --> Result
+    GradCheck --> Result
+    BF16 --> Result
+
+    style Problem fill:#ffcdd2
+    style Solutions fill:#fff9c4
+    style Result fill:#c8e6c9
+
